@@ -1,0 +1,6 @@
+{
+    "projectName": "Stablecoin",
+    "namespace": "Stablecoin.Contracts",
+    "lang": 0,
+    "autoCodeGen": true
+}

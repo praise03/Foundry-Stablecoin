@@ -1,0 +1,24 @@
+Steps for building a stablecoin.
+
+1. Created the ERC20 stablecoin with a mint and burn function.
+2. Create a governing contract that controls its value and supply (Transfer ownershp to this contract)
+
+3. First we create a depositCollateral function to accept deposits of the appointed exogenous collateral token
+	-The deposits can be used as collateral to mint our stablecoin
+
+4. The Health factor which is a ratio of the sum of collaterals to DSC minted for a user must be maintained hence maintaing the overall health factor of our system(to ensure stability ($1))
+	- We defined a minimum health factor constant = 1 i.e if ratio collateral to stablecoin minted falls below 1. User's health factor is broken and can be liquidated
+
+5. We write a function that used chainlink price feeds to get the total $usd value of collateral deposited
+
+6. We define a threshold constant = 50. Guessing we divide collateral in usd by stablecoin Minted assuming 1 stablecoin = $1. Then check if the ratio is less than 50 ie 200% difference
+
+7. Health factor system complete. Now we can redeem collateral, mint and burn stablecoin. In a system that keeps 1 stablecoin = $1
+
+7. We write the mint stablecoin function that checks if the amount of stablecoin we want to mint will not bring our health factor below the 1 constant.
+	- It reverts if executing the function will damage health factor
+
+8. We write a burn stablecoin function that burns stablecoins when a user wants to redeem a certain amount of their collateral.
+	- Reverts if burning will damage health factor also.
+
+9. We write a liquidate function that allows other users 
