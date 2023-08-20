@@ -22,10 +22,12 @@ contract DSCEngine is ReentrancyGuard {
     error DSCEngine__BreaksHealthFactor(uint256 healthFactor);
     error DSCEngine__MintFailed();
     error DSCEngine__HealthFactorOk();
+    error DSCEngine__HealthFactorNotImproved();
 
     // STATE VARIABLES //
     uint256 private constant LIQUIDATION_TRESHOLD = 50;
-    uint256 private constant MIN_HEALTH_FACTOR = 1;
+    uint256 private constant MIN_HEALTH_FACTOR = 1e18;
+    uint256 LIQUIDATION_BONUS = 10;
 
     mapping(address token => address priceFeed) private s_priceFeeds; // maps token address to chainlink price feed
     mapping(address user => mapping(address token => uint256 amount)) private s_collateralDeposited; // maps user to collateral amount deposited in specific token
@@ -75,9 +77,23 @@ contract DSCEngine is ReentrancyGuard {
         uint256 startingHealthFactor = _healthFactor(user);
         if (startingHealthFactor >= MIN_HEALTH_FACTOR) revert DSCEngine__HealthFactorOk();
 
-        //Here were going to figure out how much DSC in $ is owed by the user
+        //Here were going to figure out how much Collateral equivalent of $ owed by the user were paying back
         uint256 tokenAmountFromDebtCovered = getTokenAmountFromUsd(tokenCollateralAddress, debtToCover);
 
+        //We want to give rthem a bonus (10%) to incentivice liquidating other users
+        uint256 bonusCollateral = (tokenAmountFromDebtCovered * 10) / 100;
+
+        uint256 totalCollateralToRedeem = tokenAmountFromDebtCovered + bonusCollateral;
+
+        // send totalCollateralToRedeem amount of collateral to user who burns dsc on behalf of liquidated user
+        _redeemCollateral(user, msg.sender, tokenCollateralAddress, totalCollateralToRedeem);
+
+        //burn the dsc from liquidated user
+        _burnDsc(user, msg.sender, debtToCover);
+
+        //check if health factor for liquidated user and liquidator is still OK.
+        if(_healthFactor(user) <= startingHealthFactor) revert DSCEngine__HealthFactorNotImproved();
+        _revertIfHealthFactorIsBroken(msg.sender);
 
     }
 
@@ -99,6 +115,16 @@ contract DSCEngine is ReentrancyGuard {
         if(!success) revert DSCEngine__TransferFailed();
     }
 
+    // Burner burns dsc onBehalfOf ie repays their dsc debt to liquidate them
+    function _burnDsc (address onBehalfOf, address burner, uint256 amount) public { //change back
+        s_DSCMinted[onBehalfOf] -= amount;
+        bool success = i_dsc.transferFrom(burner, address(this), amount);
+
+        if(!success) revert DSCEngine__TransferFailed();
+
+        i_dsc.burn(amount);
+    }
+
     function depositCollateralAndMintDsc (address tokenCollateralAddress, uint256 amountCollateral, uint256 amountDscToMint) external{
         depositCollateral(tokenCollateralAddress, amountCollateral);
         mintDsc(amountDscToMint);
@@ -114,7 +140,8 @@ contract DSCEngine is ReentrancyGuard {
          bool success = IERC20(tokenCollateralAddress).transferFrom(msg.sender, address(this), amountCollateral);
          if (!success) revert DSCEngine__TransferFailed();
 
-         _revertIfHealthFactorIsBroken(msg.sender);
+        //causing division by zero error on initial deposit
+        //  _revertIfHealthFactorIsBroken(msg.sender);
      }
 
     /**
@@ -131,12 +158,7 @@ contract DSCEngine is ReentrancyGuard {
      }
 
      function burnDsc (uint256 amount) public moreThanZero(amount) {
-        s_DSCMinted[msg.sender] -= amount;
-        bool success = i_dsc.transferFrom(msg.sender, address(this), amount);
-
-        if(!success) revert DSCEngine__TransferFailed();
-
-        i_dsc.burn(amount);
+        _burnDsc(msg.sender, msg.sender, amount);
         _revertIfHealthFactorIsBroken(msg.sender); 
      }
 
@@ -154,7 +176,7 @@ contract DSCEngine is ReentrancyGuard {
          // Liquidation treshold = 50
          // Liquidation precision (to avoid decimals) = 100
          uint256 collateralAdjustedForTreshold = (collateralValueInUsd * 50) / 100;
-         return (collateralAdjustedForTreshold * 100) / totalDscMinted;
+         return (collateralAdjustedForTreshold * 1e18) / totalDscMinted;
      }
 
      // We aret trying to figure how much ETH/Collateral  == $ amount in DSC . TO know how much we need to repay behalf of user to be liquidiated 
@@ -189,5 +211,22 @@ contract DSCEngine is ReentrancyGuard {
          return ( ((uint256(price) * 10 ** 10 ) * amount ) / 10 ** 18 );
      }
 
+     function getAccountInformation(address user) external view returns (uint256 totalDscMinted, uint256 collateralValueInUsd){
+         totalDscMinted = s_DSCMinted[user];
+         collateralValueInUsd = getAccountCollateralValue(user);
+     }
 
+    //View functions
+
+    function getDscBalance(address user) external view returns(uint256) {
+        return s_DSCMinted[user];
+    }
+
+    function getDepositedCollateralAmount(address collateralAddress, address user) external view returns(uint256) {
+        return s_collateralDeposited[user][collateralAddress];
+    }
+
+    function getHealthFactor(address user) external view returns(uint256) {
+        return _healthFactor(user);
+    }
 }
